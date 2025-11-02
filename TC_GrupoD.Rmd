@@ -1,0 +1,1638 @@
+---
+title: "Trabalho Computacional"
+author: "Grupo D"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##### Packages a instalar:
+
+```{r}
+#install.packages("ggplot2")
+#install.packages("car")
+#install.packages("knitr")
+#install.packages("gridExtra")
+#install.packages("corrplot")
+#install.packages("caret")
+#install.packages("gbm")
+#install.packages("e1071")
+#install.packages("h2o")
+#install.packages("ggthemes")
+```
+
+##### Libraries necessárias:
+
+```{r, echo = FALSE,warning=FALSE}
+library(readr)
+library(ggplot2)
+library(purrr)
+library(dplyr)
+library(car)
+library(knitr)
+library(gridExtra)
+library(corrplot)
+library(caret) 
+library(gbm)
+library(e1071)
+library(h2o)
+library(ggthemes)
+```
+
+# Trabalho Computacional
+
+O ser humano tem uma forte associação com canções e músicas, sendo sugerido que a música pode beneficiar a saúde física e mental de várias maneiras, nomeadamente melhorando o humor ou diminuindo a dor e a ansiedade. Varios estudos têm sido realizados para compreender as músicas e a sua popularidade. Neste problema pretende-se criar um modelo preditivo da **popularidade de músicas** com base em determinadas variáveis como a energia, a acústica, a instrumentalidade, a vivacidade, entre outros.
+
+Neste trabalho pretende-se avaliar e comparar três modelos: Boosting, Redes Neuronais e Máquina de suporte de vetores (SMV).
+
+```{r}
+data <- read_csv("song_data.csv", col_types = cols(song_popularity = col_number(),
+                                                   song_duration_ms = col_number(),
+                                                   acousticness = col_number(),
+                                                   danceability = col_number(),
+                                                   energy = col_number(),
+                                                   instrumentalness = col_number(),
+                                                   key = col_number(),
+                                                   liveness = col_number(),
+                                                   loudness = col_number(),
+                                                   audio_mode = col_number(),
+                                                   speechiness = col_number(),
+                                                   tempo = col_number(),
+                                                   time_signature = col_number(),
+                                                   audio_valence = col_number()))
+```
+
+## Análise exploratória
+
+Após observação do dataset decidiu-se realizar uma análise exploratória dos dados de modo a compreender melhor a distribuição dos dados e a existência de motivos para haver necessidade de realizar tratamento de dados.
+
+```{r}
+#sumário
+summary(data)
+
+#Verificar se há observações em duplicado
+sum(duplicated.data.frame(data)) #3909
+```
+
+Perceber a distribuição das variáveis:
+
+```{r}
+fun_histogram <- function(data) {
+  numeric_cols <- data %>% select(where(is.numeric))
+  plot_list <- list()
+
+  for (col_name in colnames(numeric_cols)) {
+
+    plot <- ggplot(data, aes(x = .data[[col_name]])) +
+      geom_histogram(fill="lightsteelblue", color="grey8") +
+      stat_bin(breaks = nclass.Sturges(data[[col_name]])) +
+      labs(x = col_name, y = "Frequência", title = paste("Distribuição de", col_name)) +
+      theme_light()
+
+    plot_list[[col_name]] <- plot
+  }
+
+  return(plot_list)
+}
+
+histograms <- fun_histogram(data)
+
+print(histograms$song_popularity)
+print(histograms$song_duration_ms)
+print(histograms$acousticness)
+print(histograms$danceability)
+print(histograms$energy)
+print(histograms$instrumentalness)
+print(histograms$key)
+print(histograms$liveness)
+print(histograms$loudness)
+print(histograms$audio_mode)
+print(histograms$speechiness)
+print(histograms$time_signature)
+print(histograms$audio_valence)
+```
+
+Verificar se há outliers nas variáveis:
+
+```{r}
+fun_boxplots <- function(data) {
+
+  numeric_cols <- data %>% select(where(is.numeric))
+
+  plot_list <- list()
+
+  for (col_name in colnames(numeric_cols)) {
+    plot <- ggplot(data, aes(x = factor(1), y = .data[[col_name]])) +
+      geom_boxplot(outlier.colour = "tomato4", fill = "skyblue") +
+      labs(x = "", y = col_name, title = paste("Boxplot", col_name)) +
+      theme_minimal()
+
+    plot_list[[col_name]] <- plot
+  }
+
+  return(plot_list)
+}
+
+boxplots <- fun_boxplots(data)
+
+print(boxplots$song_popularity)
+print(boxplots$song_duration_ms)
+print(boxplots$acousticness)
+print(boxplots$danceability)
+print(boxplots$energy)
+print(boxplots$instrumentalness)
+print(boxplots$key)
+print(boxplots$liveness)
+print(boxplots$loudness)
+print(boxplots$audio_mode)
+print(boxplots$speechiness)
+print(boxplots$time_signature)
+print(boxplots$audio_valence)
+```
+
+##Tratamento de dados
+
+Depois de verificado a existência de observações duplicadas e outliers decidiu-se realizar um tratamento aos dados, removendo estas observações. Além disso, removeu-se a coluna song_name, uma vez que não vai ser necessária para a implmentação dos algoritmos. Por fim, salienta-se a importância de verificar a existência de multicolinearidade nas nas variáveis em estudo.
+
+```{r}
+#Remover song_name dos dados
+data <- data[,-1]
+
+#Eliminar observações duplicadas 
+data <- data[!duplicated(data), ]
+
+#Verificar se há multicolinearidade enttre variáveis
+#Modelo de regressão linear
+mod = lm(song_popularity~., data)
+
+#Teste de multicolinearidade
+vif(mod) #energy e loudness com vif>3
+
+#Matriz de correlação
+cor=cor(data)
+corrplot(cor, 
+         method = "color",           
+         col = colorRampPalette(c("skyblue", "white", "blue"))(200),
+         type = "upper",             
+         order = "hclust",           
+         addCoef.col = "black",      
+         tl.col = "black",          
+         tl.srt = 45,                
+         tl.cex = 0.6,               
+         number.cex = 0.5,           
+         cl.pos = "r",               
+         cl.cex = 0.8,              
+         mar = c(0, 0, 1, 0)         
+)  #loudness e energy têm correlação
+#decidimos remover a variável energy e manter a loudness, uma vez que energy tem um vif maior do que loudness
+
+#Exclusão da variável energy
+selected_vars <- c("song_popularity", "acousticness", "danceability", 
+                    "instrumentalness", "liveness", "loudness", "audio_mode", 
+                    "speechiness", "tempo", "time_signature", "audio_valence")
+
+data <- data[selected_vars]
+
+#Variávais mais significativas para os modelos
+#Step-wise
+Stepwise <- step(lm(song_popularity ~. , data = data), direction = "both") #AIC=89685.16
+
+#Remoção de variáveis
+selected_vars <- c("song_popularity", "danceability", "instrumentalness",
+                   "liveness", "loudness", "audio_mode", "speechiness", "tempo",
+                   "time_signature", "audio_valence")
+
+data <- data[selected_vars]
+
+#Para não ficar objetos a ocupar o environment
+rm(mod,selected_vars,Stepwise, cor)
+```
+
+## Conjunto de treino e teste e Normalização dos dados
+
+Para a criação dos conjuntos de treino e de teste recorreu-se à função createDataPartition. Com esta função é possível, através do parâmetro *p*, decidir a percetagem de dados que compõe o conjunto de treino, neste caso 70% (p=.7). O parâmetro *list* permite criar os dados em dataframe quando o valor lógico é falso e o parâmetro *times* indica o número de vezes que vamos separar os dados, no nosso caso, apenas 1.
+
+```{r}
+#Para que tenhamos todos o mesmo resultados nos conjuntos
+set.seed(1234)
+
+#Separar os dados em conjunto de treino e conjunto de teste
+tr <- createDataPartition(data$song_popularity, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+#conjunto treino
+data.tr <- data[ tr,]
+
+#conjunto teste
+data.te  <- data[-tr,]
+
+#Normalizar os dados
+#conjunto de treino
+normalizar.Tr <- preProcess(data.tr,method=c("center","scale"))
+data.tr.n <- predict(normalizar.Tr,newdata=data.tr)
+
+#conjunto de teste
+normalizar.Te <- preProcess(data.te,method=c("center","scale"))
+data.te.n <- predict(normalizar.Te,newdata=data.te)
+```
+
+## Modelos
+
+##### MAPE
+
+Disposemos aqui a função de cálculo do MAPE, uma vez que vai ser utilizada por todos os elementos do grupo como medida de performance. Deste modo, apenas há a necessidade de correr este código uma vez.
+
+```{r}
+mape <- function(actual, predicted) {
+  # Filter out zero actual values
+  non_zero_indices <- actual != 0
+  actual_non_zero <- actual[non_zero_indices]
+  predicted_non_zero <- predicted[non_zero_indices]
+  
+  # Calculate MAPE
+  return(mean(abs((actual_non_zero - predicted_non_zero) / actual_non_zero)) * 100)
+}
+```
+
+### 1. Boosting - Ana Rita Silva
+
+#### 1.1 Dados sem normalização
+
+```{r}
+#Load dos modelos
+load("Boosting_snorm.Rdata")
+```
+
+##### Primeira afinação dos hiperparâmetros
+
+*Definição de hiperparâmetros*
+
+De modo a perceber qual será o número de árvores a construir(argumento *n.trees*), o melhor tamanho da árvore(argumento *interaction.depth*), a melhor taxa de aprendizagem (argumento *shrinkage*) e número mínimo de pontos que um nó deve possuir para se tornar uma folha(argumento *n.minobsinnode*), decediu-se utilizar a função seq para estabelecer quais seriam os melhores valores para os hiperparâmetros do modelo.
+
+Portanto, o objetivo deste passo é compreender qual o melhor modelo a utilizar, de tal forma que o modelo não tenha situações de underfitting, nem overfitting.
+
+```{r}
+hiperparametros.tune1 <- expand.grid(
+  n.trees = seq(1000, 3000, by = 500),  
+  interaction.depth = seq(2, 4, by = 1),  
+  shrinkage = seq(0.01, 0.3, by = 0.5),  
+  n.minobsinnode = seq(5, 20, by = 5)  
+)
+```
+
+*Implementação de Cross-validation*
+
+A função *trainControl* é utilizada para definir o método de reamostragem e outros parâmetros para a formação e avaliação de modelos. O argumento *method* especifica o método de reamostragem, neste caso Cross-validation, e o argumento *number* especifica o número de iterações de reamostragem. Deste modo, usaremos 10-folds, sendo que o conjunto de treino será dividido em 9 folds para o conjunto de treino e 1 fold para o conjunto de validação. Além disso, o argumento *savePredictions* permite guardar as previões para cada fold, o que é uma vantagem para a análise posterior.
+
+```{r}
+params.tune1 <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+```
+
+*Encontrar o melhor modelo*
+
+A funçao *Train* é utilizada para treinar um modelo usando o método e os parâmetros especificados. Deste modo, os argumentos: *method* especifica que o algoritmo Gradient Boosting Machine (GBM) deve ser utilizado para treinar o modelo. O GBM é um método de aprendizagem de conjunto que constrói o modelo por fases, com cada fase a corrigir os erros cometidos pelas fases anteriores; *trControlo* especifica os parâmetros de controlo para o processo de formação; e *tuneGrid* especifica os hiperparâmetros a ser usados durante o processo de treino do modelo.
+
+Em suma, este código treina um modelo Gradient Boosting Machine para prever a variável song_popularity usando cross-validation, procurando sistematicamente através de uma grelha definida de hiperparâmetros para encontrar o melhor modelo.
+
+```{r}
+gbm.tune1 <- train(
+  song_popularity ~ .,
+  data = data.tr,
+  method = "gbm",
+  trControl = params.tune1,
+  tuneGrid = hiperparametros.tune1
+)
+
+#Qual o melhor modelo?
+print(gbm.tune1$bestTune)
+#n.trees = 1000
+#iteraction.depth = 4
+#shrinkage = 0.01
+#n.minobsinnode = 5
+```
+
+*Treino do modelo com os hiperparâmetros definidos*
+
+Depois de conhecidos os melhores valores para os hiperparâmetros definidos, o modelo é treinado com esses valores estabelecidos. Deste modo, gbm.grid.sd$bestTune$n.trees, gbm.grid.sd$bestTune$interaction.depth, gbm.grid.sd$bestTune$shrinkage e gbm.grid.sd$bestTune$n.minobsinnode representam os valores a utilizar no modelo final.
+
+```{r}
+best.tune1 <- gbm(
+  song_popularity ~ .,
+  data = data.tr,
+  distribution = "gaussian",
+  n.trees = gbm.tune1$bestTune$n.trees,
+  interaction.depth = gbm.tune1$bestTune$interaction.depth,
+  shrinkage = gbm.tune1$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune1$bestTune$n.minobsinnode
+)
+```
+
+*Previstos*
+
+A função *predict* utiliza o melhor modelo GBM treinado para gerar previsões para o conjunto de teste. Sendo que recorre ao o número ótimo de árvores (argumento *n.trees*) determinado durante o processo de ajuste dos hiperparâmetros para fazer previsões.
+
+```{r}
+pred.tune1 <- predict(best.tune1, newdata = data.te, n.trees = gbm.tune1$bestTune$n.trees)
+```
+
+*Medidas de performance*
+
+Após calculo dos previstos, é possível calcular o RMSE e o MAPE de modo a ser possível avaliar a performance do modelo gerado.
+
+```{r}
+sqrt(mean((pred.tune1 - data.te$song_popularity)^2)) #19.98048
+
+actual_values1 <- data.te$song_popularity
+predicted_values1 <- pred_sd
+
+mape(actual_values1, predicted_values1) #113.2015
+```
+
+*Importância das variáveis*
+
+De forma a perceber qual a importância das variáveis no melhor modelo, decidiu-se realizar um gráfico de barras. Assim, var_imp.sd representa a importância de cada variável no melhor modelo e var_imp_df.sd é uma dataframa com a correlação entre a importância a variável a que corresponde, de modo a ser possível criar o gráfico de barras.
+
+```{r}
+var.imp.tune1 <- summary(gbm.tune1$finalModel, n.trees = gbm.tune1$bestTune$n.trees, plotit = FALSE)
+var.imp.tune1.df <- data.frame(variable = var.imp.tune1$var, importance = var.imp.tune1$rel.inf)
+ggplot(var.imp.tune1.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Segunda afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune2 <- expand.grid(
+  n.trees = seq(500, 1000, by = 250),  
+  interaction.depth = seq(3, 6, by = 1),  
+  shrinkage = seq(0.005, 0.01, by = 0.02),  
+  n.minobsinnode = seq(1, 10, by = 1)  
+)
+
+#Implementação de Cross-validation
+params.tune2 <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune2 <- train(
+  song_popularity ~ .,
+  data = data.tr,
+  method = "gbm",
+  trControl = params.tune2,
+  tuneGrid = hiperparametros.tune2
+)
+
+#Qual o melhor modelo?
+print(gbm.tune2$bestTune)
+#n.trees = 1000
+#iteraction.depth = 6
+#shrinkage = 0.005
+#n.minobsinnode = 4
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune2 <- gbm(
+  song_popularity ~ .,
+  data = data.tr,
+  distribution = "gaussian",
+  n.trees = gbm.tune2$bestTune$n.trees,
+  interaction.depth = gbm.tune2$bestTune$interaction.depth,
+  shrinkage = gbm.tune2$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune2$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune2 <- predict(best.tune2, newdata = data.te, n.trees = gbm.tune2$bestTune$n.trees)
+
+#Medidas de performance
+sqrt(mean((pred.tune2 - data.te$song_popularity)^2)) #19.969
+
+actual_values2 <- data.te$song_popularity
+predicted_values2 <- pred.tune2
+
+mape(actual_values2, predicted_values2) #113.2853
+
+var.imp.tune2 <- summary(gbm.tune2$finalModel, n.trees = gbm.tune2$bestTune$n.trees, plotit = FALSE)
+var.imp.tune2.df <- data.frame(variable = var.imp.tune2$var, importance = var.imp.tune2$rel.inf)
+ggplot(var.imp.tune2.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Terceira afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune3 <- expand.grid(
+  n.trees = seq(800, 1200, by = 100),  
+  interaction.depth = seq(6, 10, by = 1),  
+  shrinkage = seq(0.004, 0.006,  by = 0.001),  
+  n.minobsinnode = seq(3, 7, by = 1)  
+)
+
+#Implementação de Cross-validation
+params.tune3 <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune3 <- train(
+  song_popularity ~ .,
+  data = data.tr,
+  method = "gbm",
+  trControl = params.tune3,
+  tuneGrid = hiperparametros.tune3
+)
+
+#Qual o melhor modelo?
+print(gbm.tune3$bestTune)
+#n.trees = 1100	
+#iteraction.depth = 9	
+#shrinkage = 0.006
+#n.minobsinnode = 3
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune3 <- gbm(
+  song_popularity ~ .,
+  data = data.tr,
+  distribution = "gaussian",
+  n.trees = gbm.tune3$bestTune$n.trees,
+  interaction.depth = gbm.tune3$bestTune$interaction.depth,
+  shrinkage = gbm.tune3$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune3$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune3 <- predict(best.tune3, newdata = data.te, n.trees = gbm.tune3$bestTune$n.trees)
+
+#Medidas de performance
+sqrt(mean((pred.tune3 - data.te$song_popularity)^2)) #19.97239
+
+actual_values3 <- data.te$song_popularity
+predicted_values3 <- pred.tune3
+
+mape(actual_values3, predicted_values3) #113.1258
+
+var.imp.tune3 <- summary(gbm.tune3$finalModel, n.trees = gbm.tune3$bestTune$n.trees, plotit = FALSE)
+var.imp.tune3.df <- data.frame(variable = var.imp.tune3$var, importance = var.imp.tune3$rel.inf)
+ggplot(var.imp.tune3.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Quarta afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune4 <- expand.grid(
+  n.trees = seq(1000, 1200, by = 50),  
+  interaction.depth = seq(7, 10, by = 1),  
+  shrinkage = seq(0.006, 0.008,  by = 0.001),  
+  n.minobsinnode = seq(1, 5, by = 1)  
+)
+
+#Implementação de Cross-validation
+params.tune4 <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune4 <- train(
+  song_popularity ~ .,
+  data = data.tr,
+  method = "gbm",
+  trControl = params.tune4,
+  tuneGrid = hiperparametros.tune4
+)
+
+#Qual o melhor modelo?
+print(gbm.tune4$bestTune)
+#n.trees = 	1000
+#iteraction.depth = 9	
+#shrinkage = 0.007	
+#n.minobsinnode = 5
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune4 <- gbm(
+  song_popularity ~ .,
+  data = data.tr,
+  distribution = "gaussian",
+  n.trees = gbm.tune4$bestTune$n.trees,
+  interaction.depth = gbm.tune4$bestTune$interaction.depth,
+  shrinkage = gbm.tune4$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune4$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune4 <- predict(best.tune4, newdata = data.te, n.trees = gbm.tune4$bestTune$n.trees)
+
+#Medidas de performance
+sqrt(mean((pred.tune4 - data.te$song_popularity)^2)) #19.97427
+
+actual_values4 <- data.te$song_popularity
+predicted_values4 <- pred.tune4
+
+mape(actual_values4, predicted_values4) #113.2422
+
+var.imp.tune4 <- summary(gbm.tune4$finalModel, n.trees = gbm.tune4$bestTune$n.trees, plotit = FALSE)
+var.imp.tune4.df <- data.frame(variable = var.imp.tune4$var, importance = var.imp.tune4$rel.inf)
+ggplot(var.imp.tune4.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Quinta afinação dos hiperparâmetros
+
+```{r}
+hiperparametros.tune5 <- expand.grid(
+  n.trees = c(1000, 1100),  
+  interaction.depth = 9,  
+  shrinkage = seq(0.006, 0.007,  by = 0.0003),  
+  n.minobsinnode = seq(3, 7, by = 1)  
+)
+
+params.tune5 <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+gbm.tune5 <- train(
+  song_popularity ~ .,
+  data = data.tr,
+  method = "gbm",
+  trControl = params.tune5,
+  tuneGrid = hiperparametros.tune5
+)
+
+#Qual o melhor modelo?
+print(gbm.tune5$bestTune)
+#n.trees = 	1000
+#iteraction.depth = 9
+#shrinkage = 0.0066
+#n.minobsinnode = 4
+
+best.tune5 <- gbm(
+  song_popularity ~ .,
+  data = data.tr,
+  distribution = "gaussian",
+  n.trees = gbm.tune5$bestTune$n.trees,
+  interaction.depth = gbm.tune5$bestTune$interaction.depth,
+  shrinkage = gbm.tune5$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune5$bestTune$n.minobsinnode
+)
+
+pred.tune5 <- predict(best.tune5, newdata = data.te, n.trees = gbm.tune5$bestTune$n.trees)
+
+sqrt(mean((pred.tune5 - data.te$song_popularity)^2)) #19.96866
+
+actual_values5 <- data.te$song_popularity
+predicted_values5 <- pred.tune5
+
+mape(actual_values5, predicted_values5) #113.1525
+
+var.imp.tune5 <- summary(gbm.tune5$finalModel, n.trees = gbm.tune5$bestTune$n.trees, plotit = FALSE)
+var.imp.tune5.df <- data.frame(variable = var.imp.tune5$var, importance = var.imp.tune5$rel.inf)
+ggplot(var.imp.tune5.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Sexta afinação dos hiperparâmetros
+
+```{r}
+hiperparametros.tune6 <- expand.grid(
+  n.trees = 1000,  
+  interaction.depth = 9,  
+  shrinkage = 0.0066,  
+  n.minobsinnode = seq(3, 10, by = 1)  
+)
+
+params.tune6 <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+gbm.tune6 <- train(
+  song_popularity ~ .,
+  data = data.tr,
+  method = "gbm",
+  trControl = params.tune6,
+  tuneGrid = hiperparametros.tune6
+)
+
+#Qual o melhor modelo?
+print(gbm.tune6$bestTune)
+#n.trees = 	1000
+#iteraction.depth = 9
+#shrinkage = 0.0066
+#n.minobsinnode = 7
+
+best.tune6 <- gbm(
+  song_popularity ~ .,
+  data = data.tr,
+  distribution = "gaussian",
+  n.trees = gbm.tune6$bestTune$n.trees,
+  interaction.depth = gbm.tune6$bestTune$interaction.depth,
+  shrinkage = gbm.tune6$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune6$bestTune$n.minobsinnode
+)
+
+pred.tune6 <- predict(best.tune6, newdata = data.te, n.trees = gbm.tune6$bestTune$n.trees)
+
+sqrt(mean((pred.tune6 - data.te$song_popularity)^2)) #19.96057
+
+actual_values6 <- data.te$song_popularity
+predicted_values6 <- pred.tune6
+
+mape(actual_values6, predicted_values6) #113.1445
+
+var.imp.tune6 <- summary(gbm.tune6$finalModel, n.trees = gbm.tune6$bestTune$n.trees, plotit = FALSE)
+var.imp.tune6.df <- data.frame(variable = var.imp.tune6$var, importance = var.imp.tune6$rel.inf)
+ggplot(var.imp.tune6.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+*Melhor modelo*
+
+```{r}
+boost <- gbm(
+  song_popularity ~ .,
+  data = data.tr,
+  distribution = "gaussian",
+  n.trees = 1000,
+  interaction.depth = 9,
+  shrinkage = 0.0066,
+  n.minobsinnode = 7
+)
+
+pred <- predict(boost, newdata = data.te, n.trees = boost$n.trees)
+
+sqrt(mean((pred - data.te$song_popularity)^2)) #19.9486
+
+actual_values <- data.te$song_popularity
+predicted_values <- pred
+
+mape(actual_values, predicted_values) #112.9807
+
+var.imp <- summary(boost, n.trees = boost$n.trees, plotit = FALSE)
+var.imp.df <- data.frame(variable = var.imp$var, importance = var.imp$rel.inf)
+ggplot(var.imp.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+*Actual vs Predict Plot*
+
+```{r}
+actual_values <- data.te$song_popularity
+predicted_values <- pred
+
+df <- data.frame(index = 1:length(actual_values), actual = actual_values, predicted = predicted_values)
+
+df_sorted <- df[order(df$actual), ]
+df_sorted = data.frame(index = 1:length(actual_values), actual = df_sorted$actual, predicted = df_sorted$predicted)
+
+ggplot(df_sorted, aes(x = index)) +
+  geom_line(aes(y = actual, color = "Verdadeiros")) +
+  geom_line(aes(y = predicted, color = "Previstos")) +
+  labs(title = "Valores Verdadeiros vs Valores Previstos - Boosting",
+       x = "Indíces",
+       y = "Valores") +
+  scale_color_manual(name = "Legenda", values = c("Verdadeiros" = "blue", "Previstos" = "red")) +
+  theme_minimal()
+```
+
+#### 1.2 Dados com normalização
+
+```{r}
+#Load dos modelos
+load("Boosting_norm.Rdata")
+```
+
+Neste momento serão afinados os hiperparâmetros para os dados após normalização.
+
+##### Primeira afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune1.n <- expand.grid(
+  n.trees = seq(1000, 3000, by = 500),  
+  interaction.depth = seq(2, 4, by = 1),  
+  shrinkage = seq(0.01, 0.3, by = 0.5),  
+  n.minobsinnode = seq(5, 20, by = 5)  
+)
+
+#Implementação de Cross-validation
+params.tune1.n <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune1.n <- train(
+  song_popularity ~ .,
+  data = data.tr.n,
+  method = "gbm",
+  trControl = params.tune1.n,
+  tuneGrid = hiperparametros.tune1.n
+)
+
+#Qual o melhor modelo?
+print(gbm.tune1.n$bestTune) 
+
+#n.trees = 1000
+#iteraction.depth = 4
+#shrinkage = 0.01
+#n.minobsinnode = 10
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune1.n <- gbm(
+  song_popularity ~ .,
+  data = data.tr.n,
+  distribution = "gaussian",
+  n.trees = gbm.tune1.n$bestTune$n.trees,
+  interaction.depth = gbm.tune1.n$bestTune$interaction.depth,
+  shrinkage = gbm.tune1.n$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune1.n$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune1.n <- predict(best.tune1.n, newdata = data.te.n, n.trees = gbm.tune1.n$bestTune$n.trees)
+pred.tune1.n <- normalizar.Te$mean["song_popularity"] + pred.tune1.n * normalizar.Te$std["song_popularity"]
+
+#Medidas de performance
+sqrt(mean((pred.tune1.n - data.te$song_popularity)^2)) #20.23332
+
+actual_values1.n <- data.te$song_popularity
+predicted_values1.n <- pred.tune1.n
+
+mape(actual_values1.n, predicted_values1.n) #108.9484
+
+#Importância das variáveis
+var.imp.tune1.n <- summary(gbm.tune1.n$finalModel, n.trees = gbm.tune1.n$bestTune$n.trees, plotit = FALSE)
+var.imp.tune1.n.df <- data.frame(variable = var.imp.tune1.n$var, importance = var.imp.tune1.n$rel.inf)
+ggplot(var.imp.tune1.n.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Segunda afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune2.n <- expand.grid(
+  n.trees = seq(500, 1000, by = 250),  
+  interaction.depth = seq(3, 6, by = 1),  
+  shrinkage = seq(0.005, 0.01, by = 0.02),  
+  n.minobsinnode = seq(10, 20, by = 1)  
+)
+
+#Implementação de Cross-validation
+params.tune2.n <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune2.n <- train(
+  song_popularity ~ .,
+  data = data.tr.n,
+  method = "gbm",
+  trControl = params.tune2.n,
+  tuneGrid = hiperparametros.tune2.n
+)
+
+#Qual o melhor modelo?
+print(gbm.tune2.n$bestTune)
+#n.trees = 1000
+#iteraction.depth = 6
+#shrinkage = 0.005
+#n.minobsinnode = 17
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune2.n <- gbm(
+  song_popularity ~ .,
+  data = data.tr.n,
+  distribution = "gaussian",
+  n.trees = gbm.tune2.n$bestTune$n.trees,
+  interaction.depth = gbm.tune2.n$bestTune$interaction.depth,
+  shrinkage = gbm.tune2.n$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune2.n$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune2.n <- predict(best.tune2.n, newdata = data.te.n, n.trees = gbm.tune2.n$bestTune$n.trees)
+pred.tune2.n <- normalizar.Te$mean["song_popularity"] + pred.tune2.n * normalizar.Te$std["song_popularity"]
+
+#Medidas de performance
+sqrt(mean((pred.tune2.n - data.te$song_popularity)^2)) #20.24918
+
+actual_values2.n <- data.te$song_popularity
+predicted_values2.n <- pred.tune2.n
+
+mape(actual_values2.n, predicted_values2.n) #109.1195
+
+#Importância das variáveis
+var.imp.tune2.n <- summary(gbm.tune2.n$finalModel, n.trees = gbm.tune2.n$bestTune$n.trees, plotit = FALSE)
+var.imp.tune2.n.df <- data.frame(variable = var.imp.tune2.n$var, importance = var.imp.tune2.n$rel.inf)
+ggplot(var.imp.tune2.n.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Terceira afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune3.n <- expand.grid(
+  n.trees = seq(800, 1200, by = 100),  
+  interaction.depth = seq(6, 8, by = 1),  
+  shrinkage = seq(0.004, 0.006,  by = 0.001),
+  n.minobsinnode = seq(17, 25, by = 1)  
+)
+
+#Implementação de Cross-validation
+params.tune3.n <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune3.n <- train(
+  song_popularity ~ .,
+  data = data.tr.n,
+  method = "gbm",
+  trControl = params.tune3.n,
+  tuneGrid = hiperparametros.tune3.n
+)
+
+#Qual o melhor modelo?
+print(gbm.tune3.n$bestTune) 
+
+#n.trees = 1100
+#iteraction.depth = 8
+#shrinkage = 0.005
+#n.minobsinnode = 24
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune3.n <- gbm(
+  song_popularity ~ .,
+  data = data.tr.n,
+  distribution = "gaussian",
+  n.trees = gbm.tune3.n$bestTune$n.trees,
+  interaction.depth = gbm.tune3.n$bestTune$interaction.depth,
+  shrinkage = gbm.tune3.n$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune3.n$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune3.n <- predict(best.tune3.n, newdata = data.te.n, n.trees = gbm.tune3.n$bestTune$n.trees)
+pred.tune3.n <- normalizar.Te$mean["song_popularity"] + pred.tune3.n * normalizar.Te$std["song_popularity"]
+
+#Medidas de performance
+sqrt(mean((pred.tune3.n - data.te$song_popularity)^2)) #20.24301
+
+actual_values3.n <- data.te$song_popularity
+predicted_values3.n <- pred.tune3.n
+
+mape(actual_values3.n, predicted_values3.n) #108.7862
+
+#Importância das variáveis
+var.imp.tune3.n <- summary(gbm.tune3.n$finalModel, n.trees = gbm.tune3.n$bestTune$n.trees, plotit = FALSE)
+var.imp.tune3.n.df <- data.frame(variable = var.imp.tune3.n$var, importance = var.imp.tune3.n$rel.inf)
+ggplot(var.imp.tune3.n.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Quarta afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune4.n <- expand.grid(
+  n.trees = seq(1000, 1300, by = 100),  
+  interaction.depth = seq(6, 9, by = 1),  
+  shrinkage = seq(0.005, 0.006,  by = 0.0005),
+  n.minobsinnode = seq(17, 24, by = 1)  
+)
+
+#Implementação de Cross-validation
+params.tune4.n <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune4.n <- train(
+  song_popularity ~ .,
+  data = data.tr.n,
+  method = "gbm",
+  trControl = params.tune4.n,
+  tuneGrid = hiperparametros.tune4.n
+)
+
+#Qual o melhor modelo?
+print(gbm.tune4.n$bestTune) 
+
+#n.trees = 1000
+#iteraction.depth = 9
+#shrinkage = 0.005
+#n.minobsinnode = 21
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune4.n <- gbm(
+  song_popularity ~ .,
+  data = data.tr.n,
+  distribution = "gaussian",
+  n.trees = gbm.tune4.n$bestTune$n.trees,
+  interaction.depth = gbm.tune4.n$bestTune$interaction.depth,
+  shrinkage = gbm.tune4.n$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune4.n$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune4.n <- predict(best.tune4.n, newdata = data.te.n, n.trees = gbm.tune4.n$bestTune$n.trees)
+pred.tune4.n <- normalizar.Te$mean["song_popularity"] + pred.tune4.n * normalizar.Te$std["song_popularity"]
+
+#Medidas de performance
+sqrt(mean((pred.tune4.n - data.te$song_popularity)^2)) #20.23482
+
+actual_values4.n <- data.te$song_popularity
+predicted_values4.n <- pred.tune4.n
+
+mape(actual_values4.n, predicted_values4.n) #109.0503
+
+#Importância das variáveis
+var.imp.tune4.n <- summary(gbm.tune4.n$finalModel, n.trees = gbm.tune4.n$bestTune$n.trees, plotit = FALSE)
+var.imp.tune4.n.df <- data.frame(variable = var.imp.tune4.n$var, importance = var.imp.tune4.n$rel.inf)
+ggplot(var.imp.tune4.n.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Quinta afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune5.n <- expand.grid(
+  n.trees = 1000,  
+  interaction.depth = seq(9, 12, by = 1),  
+  shrinkage = 0.005,
+  n.minobsinnode = seq(20, 24, by = 1)  
+)
+
+#Implementação de Cross-validation
+params.tune5.n <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune5.n <- train(
+  song_popularity ~ .,
+  data = data.tr.n,
+  method = "gbm",
+  trControl = params.tune5.n,
+  tuneGrid = hiperparametros.tune5.n
+)
+
+#Qual o melhor modelo?
+print(gbm.tune5.n$bestTune) 
+
+#n.trees = 1000
+#iteraction.depth = 12
+#shrinkage = 0.005
+#n.minobsinnode = 21
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune5.n <- gbm(
+  song_popularity ~ .,
+  data = data.tr.n,
+  distribution = "gaussian",
+  n.trees = gbm.tune5.n$bestTune$n.trees,
+  interaction.depth = gbm.tune5.n$bestTune$interaction.depth,
+  shrinkage = gbm.tune5.n$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune5.n$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune5.n <- predict(best.tune5.n, newdata = data.te.n, n.trees = gbm.tune5.n$bestTune$n.trees)
+pred.tune5.n <- normalizar.Te$mean["song_popularity"] + pred.tune5.n * normalizar.Te$std["song_popularity"]
+
+#Medidas de performance
+sqrt(mean((pred.tune5.n - data.te$song_popularity)^2)) #20.22938
+
+actual_values5.n <- data.te$song_popularity
+predicted_values5.n <- pred.tune5.n
+
+mape(actual_values5.n, predicted_values5.n) #108.843
+
+#Importância das variáveis
+var.imp.tune5.n <- summary(gbm.tune5.n$finalModel, n.trees = gbm.tune5.n$bestTune$n.trees, plotit = FALSE)
+var.imp.tune5.n.df <- data.frame(variable = var.imp.tune5.n$var, importance = var.imp.tune5.n$rel.inf)
+ggplot(var.imp.tune5.n.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+##### Sexta afinação dos hiperparâmetros
+
+```{r}
+#Definição de hiperparâmetros
+hiperparametros.tune6.n <- expand.grid(
+  n.trees = 1000,  
+  interaction.depth = seq(9, 15, by = 1),  
+  shrinkage = 0.005,
+  n.minobsinnode = 21  
+)
+
+#Implementação de Cross-validation
+params.tune6.n <- trainControl(
+  method = "cv", 
+  number = 10, 
+  savePredictions = "final")
+
+#Encontrar o melhor modelo
+gbm.tune6.n <- train(
+  song_popularity ~ .,
+  data = data.tr.n,
+  method = "gbm",
+  trControl = params.tune6.n,
+  tuneGrid = hiperparametros.tune6.n
+)
+
+#Qual o melhor modelo?
+print(gbm.tune6.n$bestTune) 
+
+#n.trees = 1000
+#iteraction.depth = 12
+#shrinkage = 0.005
+#n.minobsinnode = 21
+
+#Treino do modelo com os hiperparâmetros definidos no melhor modelo
+best.tune6.n <- gbm(
+  song_popularity ~ .,
+  data = data.tr.n,
+  distribution = "gaussian",
+  n.trees = gbm.tune6.n$bestTune$n.trees,
+  interaction.depth = gbm.tune6.n$bestTune$interaction.depth,
+  shrinkage = gbm.tune6.n$bestTune$shrinkage,
+  n.minobsinnode = gbm.tune6.n$bestTune$n.minobsinnode
+)
+
+#Previstos
+pred.tune6.n <- predict(best.tune6.n, newdata = data.te.n, n.trees = gbm.tune6.n$bestTune$n.trees)
+pred.tune6.n <- normalizar.Te$mean["song_popularity"] + pred.tune6.n * normalizar.Te$std["song_popularity"]
+
+#Medidas de performance
+sqrt(mean((pred.tune6.n - data.te$song_popularity)^2)) #20.21717
+
+actual_values6.n <- data.te$song_popularity
+predicted_values6.n <- pred.tune6.n
+
+mape(actual_values6.n, predicted_values6.n) #109.058
+
+#Importância das variáveis
+var.imp.tune6.n <- summary(gbm.tune6.n$finalModel, n.trees = gbm.tune6.n$bestTune$n.trees, plotit = FALSE)
+var.imp.tune6.n.df <- data.frame(variable = var.imp.tune6.n$var, importance = var.imp.tune6.n$rel.inf)
+ggplot(var.imp.tune6.n.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+*Melhor modelo*
+
+```{r}
+boost.n <- gbm(
+  song_popularity ~ .,
+  data = data.tr.n,
+  distribution = "gaussian",
+  n.trees = 1000,
+  interaction.depth = 12,
+  shrinkage = 0.005,
+  n.minobsinnode = 21
+)
+
+pred.n <- predict(boost.n, newdata = data.te.n, n.trees = boost.n$n.trees)
+pred.n <- normalizar.Te$mean["song_popularity"] + pred.n * normalizar.Te$std["song_popularity"]
+
+sqrt(mean((pred.n - data.te$song_popularity)^2)) #20.22463
+
+actual_values.n <- data.te$song_popularity
+predicted_values.n <- pred.n
+
+mape(actual_values.n, predicted_values.n) #108.9634
+
+var.imp.n <- summary(boost.n, n.trees = boost.n$n.trees, plotit = FALSE)
+var.imp.n.df <- data.frame(variable = var.imp.n$var, importance = var.imp.n$rel.inf)
+ggplot(var.imp.n.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+*Actual vs Predict Plot*
+
+```{r}
+actual_values <- data.te$song_popularity
+predicted_values <- pred.n
+
+df <- data.frame(index = 1:length(actual_values), actual = actual_values, predicted = predicted_values)
+
+df_sorted <- df[order(df$actual), ]
+df_sorted = data.frame(index = 1:length(actual_values), actual = df_sorted$actual, predicted = df_sorted$predicted)
+
+ggplot(df_sorted, aes(x = index)) +
+  geom_line(aes(y = actual, color = "Verdadeiros")) +
+  geom_line(aes(y = predicted, color = "Previstos")) +
+  labs(title = "Valores Verdadeiros vs Valores Previstos - Boosting (Dados normalizados)",
+       x = "Indíce",
+       y = "Valores") +
+  scale_color_manual(name = "Legenda", values = c("Verdadeiros" = "blue", "Previstos" = "red")) +
+  theme_minimal()
+```
+
+Apenas por curiosidade e para motivos de comparação, decidi treinar e testar o modelo final obtido com os dados não normalizados nos conjuntos de treino e teste normalizados e o modelo final obtido com os dados normalizados nos conjuntos de treino e teste não normalizados.
+
+```{r}
+load("Boosting_snorm.norm.Rdata")
+
+#modelo final obtido com os dados não normalizados 
+boost.tn <- gbm(
+  song_popularity ~ .,
+  data = data.tr.n,
+  distribution = "gaussian",
+  n.trees = 1000,
+  interaction.depth = 9,
+  shrinkage = 0.0066,
+  n.minobsinnode = 7
+)
+
+pred.tn <- predict(boost.tn, newdata = data.te.n, n.trees = boost.tn$n.trees)
+pred.tn <- normalizar.Te$mean["song_popularity"] + pred.tn * normalizar.Te$std["song_popularity"]
+
+sqrt(mean((pred.tn - data.te$song_popularity)^2)) #20.24965
+
+actual_values.tn <- data.te$song_popularity
+predicted_values.tn <- pred.tn
+
+mape(actual_values.tn, predicted_values.tn) #108.9427
+
+var.imp.tn <- summary(boost.tn, n.trees = boost.tn$n.trees, plotit = FALSE)
+var.imp.tn.df <- data.frame(variable = var.imp.tn$var, importance = var.imp.tn$rel.inf)
+ggplot(var.imp.tn.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+#modelo final obtido com os dados normalizados 
+boost.t <- gbm(
+  song_popularity ~ .,
+  data = data.tr,
+  distribution = "gaussian",
+  n.trees = 1000,
+  interaction.depth = 12,
+  shrinkage = 0.005,
+  n.minobsinnode = 21
+)
+
+pred.t <- predict(boost.t, newdata = data.te, n.trees = boost.t$n.trees)
+
+sqrt(mean((pred.t - data.te$song_popularity)^2)) #19.95978
+
+actual_values.tn <- data.te$song_popularity
+predicted_values.tn <- pred.tn
+
+mape(actual_values.tn, predicted_values.tn) #108.9427
+
+var.imp.t <- summary(boost.t, n.trees = boost.t$n.trees, plotit = FALSE)
+var.imp.t.df <- data.frame(variable = var.imp.t$var, importance = var.imp.t$rel.inf)
+ggplot(var.imp.t.df, aes(x = reorder(variable, importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variáveis", y = "Importância", title = "Importância das Variáveis") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+### 2. Redes neuronais - Vasco Margarido
+
+#### 2.1 Redes Neuronais (nnet)
+
+```{r}
+#Load dos modelos (nnet)
+load("RedesNeuronais.Rdata")
+
+# Load dos modelos (H2O)
+h2o.init()
+
+data.h2o.tr.n = as.h2o(data.tr.n)
+data.h2o.te.n = as.h2o(data.te.n)
+
+cwd <- getwd()
+filename <- "DeepLearning_model_R_1717159319714_5"
+model_path <- file.path(cwd, filename)
+model <- h2o.loadModel(model_path)
+```
+
+##### Tuning
+
+```{r}
+# TUNING 1
+Data.tune_NN_1=tune.nnet(song_popularity~., data=data.tr.n, size=seq(1:20), decay=c(1, 2, 3, 4, 5, 6), linout=TRUE)
+Data.tune_NN_1 # Best performance Size = 16, Decay = 6
+
+# TUNING 2
+Data.tune_NN_2=tune.nnet(song_popularity~., data=data.tr.n, size=16, decay=c(6,7,8,9,10), linout=TRUE)
+Data.tune_NN_2 # Best performance Size = 16, Decay = 7
+```
+
+##### Treino do Modelo
+
+```{r}
+# NEURAL NETWORK 1
+Data.final_NN_1=nnet(song_popularity~.,data=data.tr.n,size=16 ,linout=TRUE,maxit=1000, decay = 6)
+
+# NEURAL NETWORK 2
+Data.final_NN_2=nnet(song_popularity~.,data=data.tr.n,size=16 ,linout=TRUE,maxit=1000, decay = 7)
+```
+
+##### Testing
+
+```{r}
+# PREDICTION 1
+pred_NN_1 = predict(Data.final_NN_1,newdata=data.te.n)
+pred_NN_1 = normalizar.Te$mean["song_popularity"]+pred_NN_1*normalizar.Te$std["song_popularity"]
+
+# PREDICTION 2
+pred_NN_2 = predict(Data.final_NN_2,newdata=data.te.n)
+pred_NN_2 = normalizar.Te$mean["song_popularity"]+pred_NN_2*normalizar.Te$std["song_popularity"]
+
+# RMSE NN 1
+RMSE_NN_1 = RMSE(pred_NN_1,data.te$song_popularity) # 20.10624
+RMSE_NN_1
+
+# RMSE NN 2
+RMSE_NN_2 = RMSE(pred_NN_2,data.te$song_popularity) # 20.10456
+RMSE_NN_2
+
+# Calculate MAPE NN 1
+mape_value_NN_1 <- mape(data.te$song_popularity, pred_NN_1) # 113.1464
+mape_value_NN_1
+
+# Calculate MAPE NN 2
+mape_value_NN_2 <- mape(data.te$song_popularity, pred_NN_2) # 113.1766
+mape_value_NN_2
+```
+
+##### Visualização dos Resultados
+
+```{r}
+actual_values <- data.te$song_popularity
+predicted_values <- pred_NN_2
+
+# Create a data frame for plotting
+
+df <- data.frame(index = 1:length(actual_values), actual = actual_values, predicted = predicted_values)
+
+df_sorted <- df[order(df$actual), ]
+df_sorted = data.frame(index = 1:length(actual_values), actual = df_sorted$actual, predicted = df_sorted$predicted)
+
+# Subset to the first 100 values
+df_subset <- df_sorted[1:100, ]
+
+# Calculate residuals
+df$residuals <- actual_values - predicted_values
+
+# Line plot
+ggplot(df_sorted, aes(x = index)) +
+  geom_line(aes(y = actual, color = "Valores Verdadeiros")) +
+  geom_line(aes(y = predicted, color = "Valores Previstos")) +
+  labs(title = "Valores Verdadeiros vs Valores Previstos - Redes Neuronais (nnet)",
+       x = "Indices",
+       y = "Valores") +
+  scale_color_manual(name = "Legenda", values = c("Valores Verdadeiros" = "blue", "Valores Previstos" = "red")) +
+  theme_minimal()
+
+# Histogram of errors
+ggplot(df, aes(x = residuals)) +
+  geom_histogram(bins = 14, fill = "lightblue", color = "black", alpha = 0.7) +
+  scale_x_continuous(breaks = seq(-60,40, by= 10)) +
+  labs(title = "Histograma do Erro dos Valores Previstos - Redes Neuronais (nnet)",
+       x = "Valores Residuais ",
+       y = "Frequencia") +
+  theme_minimal()
+```
+
+#### 2.2 Redes Neuronais (H2O)
+
+##### Treino do Modelo
+
+```{r}
+# Treinar um novo modelo
+h2o.init()
+
+# Converter os df em formato h2o
+data.h2o.tr.n = as.h2o(data.tr.n)
+data.h2o.te.n = as.h2o(data.te.n)
+
+
+model <- h2o.deeplearning(
+  x = 2:10, # Input features
+  y = 1,   # Output target
+  training_frame = data.h2o.tr.n,
+  hidden = c(6, 3), # Number of neurons in each hidden layer
+  activation = c("Rectifier"), # Activation function for hidden layers
+  epochs = 2000, # Number of training epochs
+  standardize = FALSE, # Standardize the inputs
+  autoencoder = FALSE, # Not using autoencoder
+  ignore_const_cols = FALSE, # Include constant columns in the model
+  seed = 123, # Seed for reproducibility
+  stopping_rounds = 25, # 5-10
+  stopping_metric = "RMSE", 
+  stopping_tolerance = 0.01,
+  adaptive_rate = TRUE, # Enable adaptive learning rate
+  #l1 = 0.0001, # Adding L1 regularization Lasso
+  #l2 = 0.0001, # Adding L2 regularization Ridge
+  #max_w2 = 10 # Setting maximum weight value
+)
+print(model)
+cenas = summary(model)
+
+# Saving model on the Current directory
+model_saved <- h2o.saveModel(object = model, path = getwd(), force = TRUE)
+```
+
+##### Testing
+
+```{r}
+# Only work for the current selected model saved in the model variable
+h2o.init()
+
+# Get the current working directory and load saved model
+cwd <- getwd()
+filename <- "DeepLearning_model_R_1717159319714_5"
+model_path <- file.path(cwd, filename)
+model <- h2o.loadModel(model_path)
+
+
+# PREDICTION
+pred_h2o_NN = predict(model,newdata=data.h2o.te.n)
+pred_h2o_NN = as.data.frame(as.numeric(pred_h2o_NN))
+pred_h2o_NN = normalizar.Te$mean["song_popularity"]+ pred_h2o_NN*normalizar.Te$std["song_popularity"]
+pred_h2o_NN$song_popularity = data.te$song_popularity
+
+
+# RMSE
+RMSE_h2o_NN = RMSE(pred_h2o_NN$predict, pred_h2o_NN$song_popularity) 
+RMSE_h2o_NN
+
+
+# Calculate MAPE NN
+mape_value_h2o_NN <- mape(pred_h2o_NN$song_popularity, pred_h2o_NN$predict)
+mape_value_h2o_NN
+```
+
+##### Visualização dos Resultados
+
+```{r}
+actual_values <- data.te$song_popularity
+predicted_values <- pred_h2o_NN$predict
+
+# Create a data frame for plotting
+
+df <- data.frame(index = 1:length(actual_values), actual = actual_values, predicted = predicted_values)
+
+df_sorted <- df[order(df$actual), ]
+df_sorted = data.frame(index = 1:length(actual_values), actual = df_sorted$actual, predicted = df_sorted$predicted)
+
+# Subset to the first 100 values
+df_subset <- df_sorted[1:100, ]
+
+# Calculate residuals
+df$residuals <- actual_values - predicted_values
+
+# Line plot
+ggplot(df_sorted, aes(x = index)) +
+  geom_line(aes(y = actual, color = "Valores Verdadeiros")) +
+  geom_line(aes(y = predicted, color = "Valores Previstos")) +
+  labs(title = "Valores Verdadeiros vs Valores Previstos - Redes Neuronais (h2o)",
+       x = "Indices",
+       y = "Valores") +
+  scale_color_manual(name = "Legenda", values = c("Valores Verdadeiros" = "blue", "Valores Previstos" = "red")) +
+  theme_minimal()
+
+# Histogram of errors
+ggplot(df, aes(x = residuals)) +
+  geom_histogram(bins = 14, fill = "lightblue", color = "black", alpha = 0.7) +
+  scale_x_continuous(breaks = seq(-60,40, by= 10)) +
+  labs(title = "Histograma do Erro dos Valores Previstos, Redes Neuronais (h2o)",
+       x = "Valores Residuais ",
+       y = "Frequencia") +
+  theme_minimal()
+
+# Importancia de Variaveis
+Imp_Variables_H2O = summary(model)
+ggplot(Imp_Variables_H2O, aes(x = reorder(variable, relative_importance), y = relative_importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  labs(title = "Importância das Variáveis",
+       x = "Variáveis",
+       y = "Importância") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+#### 3. Máquinas de Vetores de Suporte (SVM) - Vitor Tavares
+
+```{r}
+#Load dos modelos
+load("SVM.RData")
+```
+
+##### Tuning
+
+Uso do parâmetro kernel = radial estático devido à sua alta capacidade de conseguir "lidar" com modelos multidimensionais e separação de dados não lineares, hiperparâmetro cost, gamma e epsilon determinados através do tune com o auxilio do 10-fold cross-validation
+
+```{r}
+#1º Tuning
+svm.data.tune=tune(svm, song_popularity ~ .,data=data.tr.n,kernel="radial",
+                    ranges=list(cost=seq(0.1,2,by=0.5),
+                                gamma=seq(0.1,2,by=0.5),
+                                epsilon=c(0.1,0.5,1)))
+summary(svm.data.tune)
+
+#2º Tuning
+svm.data.tune2=tune(svm, song_popularity ~ .,data=data.tr.n,kernel="radial",
+                    ranges=list(cost=seq(0.1,0.2,by=0.05),
+                                gamma=seq(0.1,0.2,by=0.05),
+                                epsilon=seq(1,1.5, by=0.1)))
+summary(svm.data.tune2)
+
+#3º Tuning
+svm.data.tune3=tune(svm, song_popularity ~ .,data=data.tr.n,kernel="radial",
+                    ranges=list(cost=seq(0.1,0.15,by=0.01),
+                                gamma=seq(0.1,0.15,by=0.01),
+                                epsilon=1))
+
+summary(svm.data.tune3)
+
+#4º Tuning com o Epsilon fixo
+svm.data.tune4=tune(svm, song_popularity ~ .,data=data.tr.n,kernel="radial",
+                    ranges=list(cost=seq(0.01,0.1,by=0.01),
+                                gamma=seq(0.01,0.1,by=0.01),
+                                epsilon=1))
+
+summary(svm.data.tune4)
+
+#5º Tuning com o Cost fixo
+svm.data.tune5 = tune(svm, song_popularity ~ .,data=data.tr.n,kernel="radial",
+                    ranges=list(cost=0.1,
+                                gamma=c(0.06,0.1),
+                                epsilon=seq(0.5,1,by=0.1)))
+summary(svm.data.tune5)
+```
+
+##### Guardar o melhor modelo
+
+Guardou-se o melhor modelo de cada tune para verificar no ponto do RMSE se 1 tune menos afinado apresentaria diferenças elevadas para com modelos com tunes mais afinados. No final dos 3 primeiros tunes, não se verificava movimento nos hiperparâmetros devido aos seus curtos ranges de valores e também baixos acréscimos nas sequências.
+
+```{r}
+Pop.best = svm.data.tune$best.model # Cost 0.1 Gamma 0.1 Epsilon 1
+
+Pop.best2 = svm.data.tune2$best.model # Cost 0.1 Gamma 0.1 Epsilon 1
+
+Pop.best3 = svm.data.tune3$best.model # Cost 0.1 Gamma 0.1 Epsilon 1
+
+Pop.best4 = svm.data.tune4$best.model # Cost 0.1 Gamma 0.06 Epsilon 1
+
+Pop.best5 = svm.data.tune5$best.model # Cost 0.1 Gamma 0.1 Epsilon 0.8
+```
+
+##### Preparar dados para o cálculo do RMSE (previsões)
+
+Criação das previsões dos dados de teste nos modelos obtidos para cada tune (geralmente apenas usaria o modelo obtido do ultimo tune quando os hiperparâmetros apresentaram um comportamento estático)
+
+```{r}
+#Previsões 1º tune
+pred = predict(Pop.best, newdata=data.te.n)
+
+pred = normalizar.Te$mean["song_popularity"]+pred*normalizar.Te$std["song_popularity"]
+
+#Previsões 2º tune
+pred2 = predict(Pop.best2, newdata=data.te.n)
+
+pred2 = normalizar.Te$mean["song_popularity"]+pred2*normalizar.Te$std["song_popularity"]
+
+#Previsões 3º tune
+pred3 = predict(Pop.best3, newdata=data.te.n)
+
+pred3 = normalizar.Te$mean["song_popularity"]+pred3*normalizar.Te$std["song_popularity"]
+
+#Previsões 4º tune
+pred4 = predict(Pop.best4, newdata=data.te.n)
+
+pred4 = normalizar.Te$mean["song_popularity"]+pred4*normalizar.Te$std["song_popularity"]
+
+#Previsões 5º tune
+pred5 = predict(Pop.best5, newdata=data.te.n)
+
+pred5 = normalizar.Te$mean["song_popularity"]+pred5*normalizar.Te$std["song_popularity"]
+```
+
+##### Calcular RMSE
+
+Cálculo do RMSE para com os dados de teste de forma a avaliar-se a performance dos modelos obtidos após o treino.
+
+```{r}
+#RMSE Modelo 1º tune
+RMSE(pred,data.te$song_popularity) #20.27901
+
+#RMSE Modelo 2º tune
+RMSE(pred2,data.te$song_popularity) #20.27901
+
+#RMSE Modelo 3º tune
+RMSE(pred3,data.te$song_popularity) #20.27901
+
+#RMSE Modelo 4º tune
+RMSE(pred4,data.te$song_popularity) #20.27888
+
+#RMSE Modelo 5º tune
+RMSE(pred5,data.te$song_popularity) #20.22508
+```
+
+##### Cálculo do MAPE (Mean Absolute Percentage Error)
+
+```{r}
+# Extract the actual and predicted values
+actual_values <- data.te$song_popularity
+predicted_values_1 <- pred
+predicted_values_2 <- pred2
+predicted_values_3 <- pred3
+predicted_values_4 <- pred4
+predicted_values_5 <- pred5
+
+# Calculate MAPE
+#Mape Modelo 1º tune
+mape_value_1 <- mape(actual_values, predicted_values_1)
+mape_value_1 #112.0884%
+
+#Mape Modelo 2º tune
+mape_value_2 <- mape(actual_values, predicted_values_2)
+mape_value_2 #112.0884%
+
+#Mape Modelo 3º tune
+mape_value_3 <- mape(actual_values, predicted_values_3)
+mape_value_3 #112.0884%
+
+#Mape Modelo 4º tune
+mape_value_4 <- mape(actual_values, predicted_values_4)
+mape_value_4 #112.1552%
+
+#Mape Modelo 5º tune
+mape_value_5 <- mape(actual_values, predicted_values_5)
+mape_value_5 #114.8019%
+```
+
+##### Line Plot: Actual vs Predicted Values Over Time - SVM (Best RMSE)
+
+```{r}
+actual_values_graph <- data.te$song_popularity
+predicted_values_graph <- pred5
+
+df <- data.frame(index = 1:length(actual_values_graph), actual = actual_values_graph, predicted = predicted_values_graph)
+
+df_sorted <- df[order(df$actual), ]
+df_sorted = data.frame(index = 1:length(actual_values_graph), actual = df_sorted$actual, predicted = df_sorted$predicted)
+
+ggplot(df_sorted, aes(x = index)) +
+  geom_line(aes(y = actual, color = "Verdadeiros")) +
+  geom_line(aes(y = predicted, color = "Previstos")) +
+  labs(title = "Valores Verdadeiros vs Valores Previstos - SVM",
+       x = "Indíces",
+       y = "Valores") +
+  scale_color_manual(name = "Legenda", values = c("Verdadeiros" = "blue", "Previstos" = "red")) +
+  theme_minimal()
+```
